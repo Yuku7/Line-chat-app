@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>クイズチャットゲーム</title>
+<style>
+    /* ページ全体のスタイル設定 */
+  body {
+    font-family: Arial, sans-serif;
+    /* 背景色 */
+    background: #e6f7ff;
+     /* 文字色 */
+    color: #333;
+    margin: 0;
+    padding: 0;
+  }
+   /* チャットの表示部分 */
+  #output {
+    overflow: auto;
+    height: 300px;
+    background: #f0f8ff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 10px;
+  }
+  /* メッセージバブルのスタイル */
+  .chat-bubble {
+    margin: 10px 0;
+    padding: 10px;
+    border-radius: 15px;
+    display: inline-block;
+    max-width: 80%;
+  }
+   /* 自分のメッセージのスタイル */
+  .my-message {
+     /* ピンク色 */
+    background: #ffdab9;
+    color: #000;
+    /* メッセージを右側に寄せる */
+    align-self: flex-end;
+  }
+   /* 他のユーザーのメッセージのスタイル */
+  .other-message {
+    /* 水色 */
+    background: #add8e6;
+    color: #000;
+  }
+  /* スコアボードのスタイル */
+  #scoreboard {
+    margin-top: 10px;
+    padding: 10px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+  }
+   /* 見出しのスタイル */
+   /* ダークブルー */
+  h1 {
+    color: #003366;
+  }
+</style>
+</head>
+<body>
+
+<div>
+    <h1>クイズチャットゲーム 🎮</h1>
+    <p>3回間違えるとラインがリセットされます！</p>
+     <!-- ユーザー名を入力する欄 -->
+    <div> 名前：<input type="text" id="uname"> </div>
+     <!-- 答えを入力する欄 -->
+    <div>
+        <textarea id="text" cols="30" rows="3" placeholder="答えを入力しよう！"></textarea>
+        <button id="send">送信</button>
+    </div>
+    <!-- チャットの表示エリア -->
+    <div id="output"></div>
+    <!-- スコアボード -->
+    <div id="scoreboard">
+        <h2>スコアボード</h2>
+        <ul id="scores"></ul>
+    </div>
+</div>
+
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+<script type="module">
+     // Firebase の初期設定をインポート
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+    import { getDatabase, ref, push, set, update, onValue } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-database.js";
+    // Firebaseの設定情報
+    const firebaseConfig = {
+       
+        authDomain: "line-chat-app-99571.firebaseapp.com",
+        projectId: "line-chat-app-99571",
+        storageBucket: "line-chat-app-99571.firebasestorage.app",
+        messagingSenderId: "25131298204",
+        appId: "1:25131298204:web:85b38c9d89536e4863ec59"
+    };
+     // Firebaseの初期化
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+    const chatRef = ref(db, "quiz-chat");
+    const scoresRef = ref(db, "scores");
+    
+    // クイズの問題と答え
+    const quizQuestions = [
+        { question: "日本で一番高い山は？", answer: ["富士山"], hint: "標高3776m。" },
+        { question: "魔法界で最も有名な少年の名前は？", answer: ["ハリー・ポッター", "ハリーポッター"], hint: "ホグワーツの生徒です。" },
+        { question: "セカイを変えるGEEKのための起業家・エンジニアスクールは？", answer: ["G’s ACADEMY", "ジーズアカデミー"], hint: "「G’s 」と「ジーズアカデミー」がキーワード。" },
+        { question: "青い体を持つネコ型ロボットの名前は？", answer: ["ドラえもん"], hint: "四次元ポケットが特徴です。" },
+        { question: "海賊王を目指す麦わら帽子の主人公は？", answer: ["ルフィ"], hint: "ゴムゴムの実を食べています。" }
+    ];
+
+    // 現在のクイズのインデックス
+    let currentQuestionIndex = 0;
+     // 現在の試行回数
+    let currentAttempts = 0;
+    // 最大試行回数（間違えた回数）
+    const maxAttempts = 3;
+    // 正解の得点
+    const pointsPerCorrectAnswer = 10;
+    // 各ユーザーのスコアを保存するオブジェクト
+    let scores = {};
+    // ユーザーの答えを正規化（空白除去と小文字化）
+    const normalizeAnswer = (text) => text.replace(/\s+/g, "").toLowerCase();
+    
+    // ユーザーの答えが正しいか確認
+    const isAnswerCorrect = (userAnswer, correctAnswers) => {
+        const normalizedUser = normalizeAnswer(userAnswer);
+        return correctAnswers.some(answer => normalizeAnswer(answer) === normalizedUser);
+    };
+    
+    // 現在のクイズを取得
+    const getCurrentQuiz = () => quizQuestions[currentQuestionIndex];
+    
+    // 現在のクイズの問題をチャットに投稿
+    const postQuiz = () => {
+        const quiz = getCurrentQuiz();
+        const message = `【問題】\n${quiz.question}`;
+        const quizMessage = { uname: "管理者", text: message, timestamp: new Date().toLocaleString() };
+        // クイズが終了した場合
+        set(push(chatRef), quizMessage);
+    };
+    
+     // スコアボードを更新
+    const updateScoreboard = () => {
+        const scoresList = Object.entries(scores)
+            .sort((a, b) => b[1] - a[1])
+            .map(([uname, score]) => `<li>${uname}: ${score}ポイント</li>`)
+            .join("");
+        $("#scores").html(scoresList);
+    };
+
+    // ユーザーが送信ボタンを押した時の処理
+    $("#send").on("click", function() {
+        // ユーザー名
+        const uname = $("#uname").val();
+        // 入力された答え
+        const text = $("#text").val();
+        if (!uname || !text) {
+            alert("名前とメッセージを入力してください！");
+            return;
+        }
+
+        const currentQuiz = getCurrentQuiz();
+
+        // ヒント無しで正解した場合のみポイント加算
+        if (isAnswerCorrect(text, currentQuiz.answer)) {
+            if (currentAttempts === 0) {  // ヒントを使わず正解した場合
+                if (!scores[uname]) scores[uname] = 0;
+                scores[uname] += pointsPerCorrectAnswer;
+                update(scoresRef, { [uname]: scores[uname] });
+            }
+            set(push(chatRef), { uname, text: "✅ 正解！🎉", timestamp: new Date().toLocaleString() });
+            currentQuestionIndex++;
+            currentAttempts = 0;
+            if (currentQuestionIndex < quizQuestions.length) {
+                postQuiz();
+            } else {
+                set(push(chatRef), { uname: "管理者", text: "クイズが終了しました！", timestamp: new Date().toLocaleString() });
+            }
+        } else {
+            currentAttempts++;
+            // 3回間違えた場合
+            if (currentAttempts >= maxAttempts) {
+                set(push(chatRef), { uname: "管理者", text: `❌ 3回間違えました！\n正解は「${currentQuiz.answer[0]}」でした！`, timestamp: new Date().toLocaleString() });
+                // 次の問題へ
+                currentQuestionIndex++;
+                // 試行回数リセット
+                currentAttempts = 0;
+                if (currentQuestionIndex < quizQuestions.length) {
+                    // 次の問題を表示
+                    postQuiz();
+                }
+            } else {
+                // 不正解の場合
+                set(push(chatRef), { uname, text: `❌ 不正解！ヒント: ${currentQuiz.hint}`, timestamp: new Date().toLocaleString() });
+            }
+        }
+        // 入力欄を空にする
+        $("#text").val("");
+    });
+    
+    // チャットデータをリアルタイムで表示
+    onValue(chatRef, (snapshot) => {
+        const data = snapshot.val();
+        // 既存のメッセージをクリア
+        $("#output").empty();
+        for (const key in data) {
+            const msg = data[key];
+            const h = `  
+                <div class="chat-bubble ${msg.uname === $("#uname").val() ? "my-message" : "other-message"}">
+                    <strong>${msg.uname}</strong>: ${msg.text} <br> <small>${msg.timestamp}</small>
+                </div>`;
+            // メッセージを表示
+            $("#output").append(h);
+        }
+    });
+
+    // スコアデータをリアルタイムで更新
+    onValue(scoresRef, (snapshot) => {
+        scores = snapshot.val() || {};
+        // スコアボードを更新
+        updateScoreboard();
+    });
+
+     // 初回のクイズを投稿
+    postQuiz();
+</script>
+</body>
+</html>
